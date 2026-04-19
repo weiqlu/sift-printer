@@ -1,8 +1,15 @@
 # sift-printer
 
-A tiny Python client for streaming **MQTT telemetry** from Bambu Lab 3D printers via Bambu's cloud broker. Useful for pulling real-time printer state (temps, progress, fan speeds, errors, HMS codes, AMS info, etc.) into a telemetry pipeline.
+A tiny Python client for streaming **printer telemetry over MQTT** from Bambu Lab 3D printers via Bambu's cloud broker. Useful for pulling real-time printer state (temps, progress, fan speeds, errors, HMS codes, AMS info, etc.) into a telemetry pipeline.
 
 Built on top of Bambu's (undocumented) cloud API and MQTT broker at `us.mqtt.bambulab.com:8883`.
+
+## Caveats
+
+- Not affiliated with or endorsed by Bambu Lab.
+- Cloud connection only. No LAN mode support.
+- Relies on reverse-engineered endpoints that can break without warning.
+- Only tested on the Bambu P1S.
 
 ## Install
 
@@ -32,7 +39,7 @@ printer.set_light(False)
 
 The printer pushes a full-state snapshot on every (re)connect, followed by deltas as state changes. Merge deltas into a running state object if you need complete state at any given moment.
 
-## Auth notes
+## Auth
 
-- Access tokens last ~90 days; use the `refreshToken` from login to mint a new one without re-entering a code.
+- Access tokens last ~90 days. Use the `refreshToken` from login to mint a new one without re-entering a code.
 - The verification code flow requires access to the email on the Bambu account.
