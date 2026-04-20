@@ -1,6 +1,6 @@
 # sift-printer
 
-A Python client that connects to Bambu Lab printers through their MQTT broker. Stream real-time printer state (temps, progress, fans, errors, AMS, etc.) and send control commands from the same session.
+A Python client that connects to Bambu Lab printers through their MQTT broker and streams real-time printer state (temps, progress, fans, errors, AMS, etc.).
 
 ## Caveats
 

@@ -1,6 +1,5 @@
 import json
 import ssl
-import time
 from collections.abc import Callable
 
 import requests
@@ -8,11 +7,10 @@ from paho.mqtt import client as mqtt
 
 
 class BambuPrinter:
-    """Client for Bambu Lab printers over Bambu's cloud MQTT broker.
+    """Read-only client for Bambu Lab printers over Bambu's cloud MQTT broker.
 
     Fetches the user ID and printer serial from Bambu's HTTP API, connects
-    to the MQTT broker, streams state updates from the printer, and sends
-    control commands to it.
+    to the MQTT broker, and streams state updates from the printer.
 
     For the login flow that produces an access token, see bambu.auth.
 
@@ -25,8 +23,7 @@ class BambuPrinter:
 
         printer = BambuPrinter(tokens["accessToken"])
         printer.on_report(lambda r: print(r))
-        printer.connect()
-        printer.set_light(False)
+        printer.connect()  # blocks, streams until interrupted
     """
 
     BASE = "https://api.bambulab.com"
@@ -95,27 +92,22 @@ class BambuPrinter:
     def on_report(self, callback: Callable[[dict], None]) -> None:
         """Register a function to run on every message from the printer.
 
-        Callbacks run on the background network thread, so keep them fast
-        and make any shared state thread-safe. Replaces any prior callback.
+        The callback runs on the MQTT network loop, so keep it fast. Slow
+        callbacks delay the next message and can stall keepalive pings.
+        Replaces any prior callback.
         """
         self._on_report = callback
 
-    def connect(self, timeout: float = 10.0) -> None:
-        """Open the MQTT connection and start listening for reports.
+    def connect(self) -> None:
+        """Open the MQTT connection and stream reports until interrupted.
 
-        Runs the MQTT network loop on a background thread, so this call
-        returns once the connection is established. Every (re)connect also
-        asks the printer for a full state snapshot, so your report callback
-        receives the current state right away instead of waiting for the
-        next field to change.
+        Blocks the calling thread. The MQTT network loop runs here directly,
+        so there's no background thread to keep alive. Stop with Ctrl-C or
+        by raising from the report callback.
 
-        Args:
-            timeout: Seconds to wait for the connection to complete before
-                giving up.
-
-        Raises:
-            TimeoutError: If the broker does not confirm the connection in
-                time (usually bad credentials, firewall, or broker down).
+        Every (re)connect asks the printer for a full state snapshot, so
+        your callback receives the current state right away instead of
+        waiting for the next field to change.
         """
         user_id = self.user_id
         serial = self.serial
@@ -144,69 +136,5 @@ class BambuPrinter:
         client.on_message = on_message
 
         client.connect(self.MQTT_HOST, self.MQTT_PORT, keepalive=60)
-        client.loop_start()
-
-        deadline = time.time() + timeout
-        while not client.is_connected():
-            if time.time() > deadline:
-                client.loop_stop()
-                raise TimeoutError("MQTT connect timed out")
-            time.sleep(0.05)
-
         self._mqtt = client
-
-    def disconnect(self) -> None:
-        """Stop the background loop and close the MQTT connection.
-
-        Safe to call multiple times; no-op if not connected.
-        """
-        if self._mqtt is not None:
-            self._mqtt.loop_stop()
-            self._mqtt.disconnect()
-            self._mqtt = None
-
-    def __enter__(self) -> "BambuPrinter":
-        self.connect()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.disconnect()
-
-    def _publish(self, payload: dict) -> None:
-        """Publish a JSON command to the printer's request topic. Internal helper."""
-        if self._mqtt is None:
-            raise RuntimeError("Not connected. Call connect() first.")
-        self._mqtt.publish(f"device/{self.serial}/request", json.dumps(payload))
-
-    def request_full_state(self) -> None:
-        """Ask the printer to publish a full-state snapshot immediately."""
-        self._publish({"pushing": {"command": "pushall"}})
-
-    def set_light(self, on: bool) -> None:
-        """Turn the chamber LED on or off."""
-        self._publish(
-            {
-                "system": {
-                    "sequence_id": "0",
-                    "command": "ledctrl",
-                    "led_node": "chamber_light",
-                    "led_mode": "on" if on else "off",
-                    "led_on_time": 500,
-                    "led_off_time": 500,
-                    "led_loop_times": 0,
-                    "led_interval_time": 0,
-                }
-            }
-        )
-
-    def pause(self) -> None:
-        """Pause the current print job."""
-        self._publish({"print": {"command": "pause", "sequence_id": "0"}})
-
-    def resume(self) -> None:
-        """Resume a paused print job."""
-        self._publish({"print": {"command": "resume", "sequence_id": "0"}})
-
-    def stop(self) -> None:
-        """Cancel the current print job."""
-        self._publish({"print": {"command": "stop", "sequence_id": "0"}})
+        client.loop_forever()
