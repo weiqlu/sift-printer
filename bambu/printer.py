@@ -6,6 +6,19 @@ import requests
 from paho.mqtt import client as mqtt
 
 
+def _deep_merge(base: dict, delta: dict) -> None:
+    """Merge delta into base in place. Dicts recurse, everything else (including lists) replaces.
+
+    Bambu resends full lists whenever any element changes, so treating lists as
+    leaves matches the payload contract.
+    """
+    for k, v in delta.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+
+
 class BambuPrinter:
     """Read-only client for Bambu Lab printers over Bambu's cloud MQTT broker.
 
@@ -22,7 +35,8 @@ class BambuPrinter:
         tokens = login_with_code("you@example.com", "123456")
 
         printer = BambuPrinter(tokens["accessToken"])
-        printer.on_report(lambda r: print(r))
+        printer.on_state(lambda s: print(s))   # hydrated full snapshot
+        # or printer.on_report(lambda r: print(r))  # raw delta
         printer.connect()  # blocks, streams until interrupted
     """
 
@@ -43,6 +57,8 @@ class BambuPrinter:
         self._user_id: str | None = None
         self._mqtt: mqtt.Client | None = None
         self._on_report: Callable[[dict], None] | None = None
+        self._on_state: Callable[[dict], None] | None = None
+        self._state: dict = {}
 
     def _http_get(self, path: str) -> dict:
         """Authenticated GET against Bambu's HTTP API. Internal helper."""
@@ -90,13 +106,41 @@ class BambuPrinter:
         return self._http_get("/v1/iot-service/api/user/bind")["devices"]
 
     def on_report(self, callback: Callable[[dict], None]) -> None:
-        """Register a function to run on every message from the printer.
+        """Register a function to run with the raw delta from every message.
+
+        The printer publishes only fields that changed since its last message,
+        so the callback receives partial payloads. Use on_state if you want
+        the hydrated full snapshot instead.
 
         The callback runs on the MQTT network loop, so keep it fast. Slow
         callbacks delay the next message and can stall keepalive pings.
         Replaces any prior callback.
         """
         self._on_report = callback
+
+    def on_state(self, callback: Callable[[dict], None]) -> None:
+        """Register a function to run with the hydrated full state after every message.
+
+        The client maintains a merged state internally: each incoming delta is
+        deep-merged into it, and the callback fires with the complete snapshot.
+        The first call receives the full state seeded by the pushall prime on
+        connect, so you never see a partial initial state.
+
+        The callback receives a live reference to the internal state dict, not
+        a copy. Reading it inside the callback is safe; retaining it across
+        messages will observe subsequent mutations. Copy explicitly if you
+        need a stable snapshot (e.g. copy.deepcopy or json round-trip).
+
+        The callback runs on the MQTT network loop, so keep it fast. Slow
+        callbacks delay the next message and can stall keepalive pings.
+        Replaces any prior callback.
+        """
+        self._on_state = callback
+
+    @property
+    def state(self) -> dict:
+        """The current hydrated printer state. Empty until the first message arrives."""
+        return self._state
 
     def connect(self) -> None:
         """Open the MQTT connection and stream reports until interrupted.
@@ -111,6 +155,7 @@ class BambuPrinter:
         """
         user_id = self.user_id
         serial = self.serial
+        self._state = {}
 
         client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -129,8 +174,12 @@ class BambuPrinter:
             )
 
         def on_message(c, userdata, msg):
+            report = json.loads(msg.payload)
+            _deep_merge(self._state, report)
             if self._on_report is not None:
-                self._on_report(json.loads(msg.payload))
+                self._on_report(report)
+            if self._on_state is not None:
+                self._on_state(self._state)
 
         client.on_connect = on_connect
         client.on_message = on_message

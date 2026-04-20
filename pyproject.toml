@@ -18,6 +18,9 @@ dev = ["ruff"]
 [tool.setuptools]
 packages = ["bambu"]
 
+[tool.setuptools.package-data]
+bambu = ["py.typed"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
