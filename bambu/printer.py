@@ -10,9 +10,23 @@ from paho.mqtt import client as mqtt
 class BambuPrinter:
     """Client for Bambu Lab printers over Bambu's cloud MQTT broker.
 
-    Covers the full flow: log in via email verification code, fetch the user
-    ID and printer serial from Bambu's HTTP API, connect to the MQTT broker,
-    stream state updates from the printer, and send control commands to it.
+    Fetches the user ID and printer serial from Bambu's HTTP API, connects
+    to the MQTT broker, streams state updates from the printer, and sends
+    control commands to it.
+
+    For the login flow that produces an access token, see bambu.auth.
+
+    Typical usage:
+
+        from bambu import BambuPrinter, login_with_code, send_verification_code
+
+        send_verification_code("you@example.com")
+        tokens = login_with_code("you@example.com", "123456")
+
+        printer = BambuPrinter(tokens["accessToken"])
+        printer.on_report(lambda r: print(r))
+        printer.connect()
+        printer.set_light(False)
     """
 
     BASE = "https://api.bambulab.com"
@@ -32,43 +46,6 @@ class BambuPrinter:
         self._user_id: str | None = None
         self._mqtt: mqtt.Client | None = None
         self._on_report: Callable[[dict], None] | None = None
-
-    @staticmethod
-    def send_verification_code(email: str) -> None:
-        """Ask Bambu to email a one-time verification code to the given address.
-
-        Raises:
-            RuntimeError: If Bambu rejects the request.
-        """
-        r = requests.post(
-            url=f"{BambuPrinter.BASE}/v1/user-service/user/sendemail/code",
-            json={"email": email, "type": "codeLogin"},
-        )
-        if not r.ok:
-            raise RuntimeError(f"sendemail/code failed: {r.status_code} {r.text}")
-
-    @staticmethod
-    def login_with_code(email: str, code: str) -> dict:
-        """Exchange an emailed verification code for an access token.
-
-        Args:
-            email: Bambu account email.
-            code: Verification code received in email.
-
-        Returns:
-            Dict with keys accessToken, refreshToken, and expiresIn (seconds,
-            typically ~7776000 which is 90 days).
-
-        Raises:
-            RuntimeError: If login fails.
-        """
-        r = requests.post(
-            url=f"{BambuPrinter.BASE}/v1/user-service/user/login",
-            json={"account": email, "code": code},
-        )
-        if not r.ok:
-            raise RuntimeError(f"login failed: {r.status_code} {r.text}")
-        return r.json()
 
     def _http_get(self, path: str) -> dict:
         """Authenticated GET against Bambu's HTTP API. Internal helper."""
