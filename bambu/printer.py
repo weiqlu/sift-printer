@@ -6,19 +6,6 @@ import requests
 from paho.mqtt import client as mqtt
 
 
-def _deep_merge(base: dict, delta: dict) -> None:
-    """Merge delta into base in place. Dicts recurse, everything else (including lists) replaces.
-
-    Bambu resends full lists whenever any element changes, so treating lists as
-    leaves matches the payload contract.
-    """
-    for k, v in delta.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _deep_merge(base[k], v)
-        else:
-            base[k] = v
-
-
 class BambuPrinter:
     """Read-only client for Bambu Lab printers over Bambu's cloud MQTT broker.
 
@@ -187,3 +174,16 @@ class BambuPrinter:
         client.connect(self.MQTT_HOST, self.MQTT_PORT, keepalive=60)
         self._mqtt = client
         client.loop_forever()
+
+
+def _deep_merge(base: dict, delta: dict) -> None:
+    """Merge delta into base in place. Dicts recurse, everything else (including lists) replaces.
+
+    Bambu resends full lists whenever any element changes, so treating lists as
+    leaves matches the payload contract.
+    """
+    for k, v in delta.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
